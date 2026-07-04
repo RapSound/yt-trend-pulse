@@ -1,14 +1,21 @@
 rules_version = '2';
-
-// Ces règles exigent qu'un visiteur soit connecté (email/mot de passe,
-// via Firebase Authentication) pour lire ou écrire quoi que ce soit dans
-// la base. Le script collect.js (GitHub Actions) utilise une clé de
-// compte de service Admin qui CONTOURNE ces règles — il continue donc de
-// fonctionner même sans connexion utilisateur, comme demandé.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    // Règles pour les vidéos
+    match /videos/{videoId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+      
+      match /snapshots/{snapshotId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null;
+      }
+    }
+    
+    // Règles pour la meta (artistes, cache)
+    match /meta/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
     }
   }
 }
