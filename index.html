@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Trend Pulse — Dashboard prédictif</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+<!-- Firebase (compat) — nécessaire pour l'authentification et Firestore -->
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
+
+<style>
+  :root{
+    --bg:#0B0B0C; --panel:#141415; --card:#1B1B1D; --card-hi:#232325;
+    --red:#FF0000; --red-dim:#7A0000; --green:#1DD75B; --amber:#FFB020; --blue:#3B82F6;
+    --txt:#F2F2F2; --txt-dim:#93939A; --line:#2A2A2D;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg); color:var(--txt); font-family:'Inter',sans-serif;}
+  .font-display{font-family:'Archivo Black',sans-serif;}
+  .font-mono{font-family:'JetBrains Mono',monospace;}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-track{background:var(--bg)}
+  ::-webkit-scrollbar-thumb{background:#333;border-radius:4px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--red-dim)}
+
+  .card{background:var(--card); border:1px solid var(--line); border-radius:14px;}
+  .card:hover{border-color:#3a3a3d;}
+  .card-clickable{cursor:pointer; transition:transform .12s ease, border-color .12s ease;}
+  .card-clickable:hover{transform:translateY(-2px); border-color:#4a4a4d;}
+  .card-clickable:active{transform:translateY(0);}
+
+  .pulse-dot{position:relative}
+  .pulse-dot::after{content:''; position:absolute; inset:-4px; border-radius:999px; border:2px solid var(--red); animation:pulse 1.8s ease-out infinite;}
+  .pulse-dot.green::after{ border-color:var(--green); }
+  @keyframes pulse{0%{transform:scale(.6);opacity:1}100%{transform:scale(1.8);opacity:0}}
+
+  .score-ring{transform:rotate(-90deg)}
+  .score-ring circle{transition:stroke-dashoffset 0.6s ease}
+
+  .tab-btn{transition:all .15s ease;}
+  .tab-btn.active{background:var(--red); color:#fff; box-shadow:0 0 0 1px rgba(255,0,0,.4), 0 8px 24px -8px rgba(255,0,0,.6);}
+  .tab-btn:not(.active):hover{background:var(--card-hi);}
+
+  .notif-card{border-left:3px solid var(--line);}
+  .notif-card.alert-breakout{border-left-color:var(--green); background:linear-gradient(90deg, rgba(29,215,91,0.08), transparent);}
+  .notif-card.alert-late{border-left-color:var(--red); background:linear-gradient(90deg, rgba(255,0,0,0.1), transparent);}
+  .notif-card.alert-stagnation{border-left-color:var(--amber); background:linear-gradient(90deg, rgba(255,176,32,0.08), transparent);}
+  .notif-card.alert-choice{border-left-color:var(--blue); background:linear-gradient(90deg, rgba(59,130,246,0.08), transparent);}
+
+  .skeleton{background:linear-gradient(90deg,#1a1a1a 25%,#262626 37%,#1a1a1a 63%); background-size:400% 100%; animation:shimmer 1.4s ease infinite;}
+  @keyframes shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
+
+  .badge{font-size:10px; letter-spacing:.06em; padding:2px 8px; border-radius:999px; font-weight:700; white-space:nowrap;}
+  input[type=text], input[type=email], input[type=password]{background:#0F0F10; border:1px solid var(--line); color:var(--txt);}
+  input[type=text]:focus, input[type=email]:focus, input[type=password]:focus{outline:none; border-color:var(--red);}
+
+  .scrollbar-thin{scrollbar-width:thin;}
+  .glow-red{box-shadow:0 0 40px -10px rgba(255,0,0,.35);}
+  .frozen-shine{background:linear-gradient(135deg, rgba(255,0,0,0.06) 0%, transparent 40%);}
+  .comment-item{border-bottom:1px solid var(--line); padding:10px 0;}
+  .comment-item:last-child{border-bottom:none;}
+  @keyframes fadeIn{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:translateY(0)}}
+  .fade-in{animation:fadeIn .25s ease;}
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app"></div>
+
+<script>
+/* =========================================================================
+   YT TREND PULSE — V5 — Firebase (Auth + Firestore) + collecte autonome
+   via GitHub Actions (voir collect.js et .github/workflows/collect.yml)
+   --------------------------------------------------------------------------
+   ⚠️ AVANT DE PUBLIER CE FICHIER SUR GITHUB, REMPLACE CES DEUX BLOCS :
+   1) FIREBASE_CONFIG ci-dessous (config web Firebase — pas un secret,
+      normal qu'elle soit visible dans le code, voir SETUP_GUIDE.md)
+   2) YOUTUBE_API_KEY_CLIENT (ta clé YouTube restreinte par référent HTTP,
+      utilisée uniquement pour la recherche libre / commentaires / charts
+      FR côté navigateur — PAS la même que celle du GitHub Action)
+   ========================================================================= */
+
+// ---------------------------------------------------------------------
+// 🔧 CONFIGURATION À REMPLIR (voir SETUP_GUIDE.md)
+// ---------------------------------------------------------------------
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB2TLwz2O7Qmwr_l0d2uVolqZ8F8U-Jsfw",
+  authDomain: "yt-trend-pulse.firebaseapp.com",
+  projectId: "yt-trend-pulse",
+  storageBucket: "yt-trend-pulse.firebasestorage.app",
+  messagingSenderId: "219266465197",
+  appId: "1:219266465197:web:1f1df3b973aa9844a33524"
+};
+const YOUTUBE_API_KEY_CLIENT = "AIzaSyAs3o6uUU9QxkerS5HcSUzyrwSlcTKf-mI";
+
+// ---------------------------------------------------------------------
+// CONFIG PRODUIT
+// ---------------------------------------------------------------------
+const WHITELIST_ARTISTS = [
+  "JUL","Gazo","Aya Nakamura","SCH","Gims","Soprano","Ninho","Tiakola",
+  "Werenoi","PLK","SDM","Hamza","Booba","Damso"
+]; // ⚠️ si tu modifies cette liste, fais pareil dans collect.js
+const COLORS = { red:"#FF0000", green:"#1DD75B", amber:"#FFB020", blue:"#3B82F6" };
+
+// ---------------------------------------------------------------------
+// FIREBASE INIT
+// ---------------------------------------------------------------------
+firebase.initializeApp(FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// ---------------------------------------------------------------------
+// STATE
+// ---------------------------------------------------------------------
+const state = {
+  user: null,
+  authError: null,
+  authLoading: false,
+  trackedVideos: {},
+  activeTab: "grandes",
+  selectedVideoId: null,
+  notifications: [],
+  loading: false,
+  loadingMsg: "",
+  lastSync: null,
+  notifPanelOpen: false,
+  searchError: null,
+  pendingChoices: [],
+  charts: [],
+  chartsLastSync: null,
+  quickFilter: "",
+};
+let analyseChartInstance = null;
+let unsubscribeVideos = null;
+
+// ---------------------------------------------------------------------
+// YOUTUBE API (client — clé restreinte, usage léger : recherche/commentaires/charts)
+// ---------------------------------------------------------------------
+const YT_BASE = "https://www.googleapis.com/youtube/v3";
+async function ytFetch(endpoint, params){
+  const url = new URL(YT_BASE + "/" + endpoint);
+  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
+  url.searchParams.set("key", YOUTUBE_API_KEY_CLIENT);
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if(!res.ok){
+    const reason = data?.error?.errors?.[0]?.reason || data?.error?.message || "erreur inconnue";
+    throw new Error(reason);
+  }
+  return data;
+}
+async function resolveChannelId(artistName){
+  const cached = await fsGetChannelCache();
+  if(cached[artistName]) return { channelId: cached[artistName] };
+  const data = await ytFetch("search", { part:"snippet", q: artistName, type:"channel", maxResults:"6" });
+  if(!data.items || data.items.length === 0) return { ambiguous:true, candidates:[], reason:"Aucune chaîne trouvée" };
+
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g,"");
+  const target = norm(artistName);
+  const exact = data.items.find(it => norm(it.snippet.title) === target);
+  if(exact){ await fsSetChannelCache(artistName, exact.snippet.channelId); return { channelId: exact.snippet.channelId }; }
+
+  const ids = data.items.map(it => it.snippet.channelId);
+  let statsById = {};
+  try{
+    const statsData = await ytFetch("channels", { part:"statistics,snippet", id: ids.join(",") });
+    (statsData.items||[]).forEach(c => statsById[c.id] = c);
+  }catch(e){}
+  const candidates = data.items.map(it => {
+    const c = statsById[it.snippet.channelId];
+    return { channelId: it.snippet.channelId, title: it.snippet.title, thumbnail: it.snippet.thumbnails?.default?.url, subs: c ? parseInt(c.statistics.subscriberCount||0) : null };
+  });
+  return { ambiguous:true, candidates, reason:"Plusieurs chaînes possibles" };
+}
+async function getUploadsPlaylistId(channelId){
+  const data = await ytFetch("channels", { part:"contentDetails", id: channelId });
+  if(!data.items?.length) throw new Error("Chaîne invalide");
+  return data.items[0].contentDetails.relatedPlaylists.uploads;
+}
+async function getRecentUploadIds(playlistId, max=15){
+  const data = await ytFetch("playlistItems", { part:"contentDetails", playlistId, maxResults:String(max) });
+  return (data.items||[]).map(it => it.contentDetails.videoId);
+}
+async function getVideosDetails(ids){
+  if(!ids.length) return [];
+  const out = [];
+  for(let i=0;i<ids.length;i+=50){
+    const data = await ytFetch("videos", { part:"snippet,statistics,contentDetails", id: ids.slice(i,i+50).join(",") });
+    out.push(...(data.items||[]));
+  }
+  return out;
+}
+async function getTrendingMusicFR(){
+  const data = await ytFetch("videos", { part:"snippet,statistics,contentDetails", chart:"mostPopular", regionCode:"FR", videoCategoryId:"10", maxResults:"25" });
+  return (data.items||[]).map((v, idx) => ({
+    id:v.id, rank: idx+1, title:v.snippet.title, channelTitle:v.snippet.channelTitle, channelId:v.snippet.channelId,
+    thumbnail:v.snippet.thumbnails?.medium?.url, publishedAt:v.snippet.publishedAt,
+    views:parseInt(v.statistics.viewCount||0), likes:parseInt(v.statistics.likeCount||0),
+    commentCount:parseInt(v.statistics.commentCount||0), duration: parseISODuration(v.contentDetails.duration),
+  }));
+}
+async function searchVideo(title, artistName){
+  const data = await ytFetch("search", { part:"snippet", q:`${title} ${artistName}`, type:"video", maxResults:"5", order:"relevance" });
+  return data.items || [];
+}
+async function getVideoComments(videoId, max=12){
+  try{
+    const data = await ytFetch("commentThreads", { part:"snippet", videoId, maxResults:String(max), order:"relevance", textFormat:"plainText" });
+    return { items:(data.items||[]).map(it=>{ const c=it.snippet.topLevelComment.snippet; return { author:c.authorDisplayName, text:c.textDisplay, likeCount:c.likeCount, publishedAt:c.publishedAt, authorImg:c.authorProfileImageUrl }; }) };
+  }catch(e){
+    const disabled = /commentsDisabled/i.test(e.message);
+    return { error: disabled ? "Commentaires désactivés sur cette vidéo." : "Impossible de charger les commentaires (" + e.message + ")." };
+  }
+}
+function parseISODuration(iso){
+  const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if(!m) return 0;
+  return (parseInt(m[1]||0)*3600)+(parseInt(m[2]||0)*60)+parseInt(m[3]||0);
+}
+function daysSince(dateStr){ return (Date.now() - new Date(dateStr).getTime())/86400000; }
+
+// ---------------------------------------------------------------------
+// FIRESTORE — accès aux données (partagées avec collect.js côté serveur)
+// ---------------------------------------------------------------------
+async function fsGetChannelCache(){
+  const doc = await db.collection('meta').doc('channelCache').get();
+  return doc.exists ? doc.data() : {};
+}
+async function fsSetChannelCache(artist, channelId){
+  await db.collection('meta').doc('channelCache').set({ [artist]: channelId }, { merge:true });
+}
+async function fsUpsertVideoAndSnapshot(video, artist, extra={}){
+  const ref = db.collection('videos').doc(video.id);
+  const nowIso = new Date().toISOString();
+  const dateKey = nowIso.slice(0,10);
+  const potential = computeEngagementScore(video.likes, video.views);
+  const snap = { t: nowIso, views: video.views, likes: video.likes, commentCount: video.commentCount||0, potential };
+
+  const doc = await ref.get();
+  const prevRecent = doc.exists ? (doc.data().snapshotsRecent || []) : [];
+  const recent = [...prevRecent.filter(s=>s.t.slice(0,10)!==dateKey), snap].sort((a,b)=>a.t.localeCompare(b.t)).slice(-10);
+
+  await ref.set({
+    title: video.title, artist, channelId: video.channelId||null, channelTitle: video.channelTitle||artist,
+    thumbnail: video.thumbnail, publishedAt: video.publishedAt, duration: video.duration||0,
+    views: video.views, likes: video.likes, commentCount: video.commentCount||0,
+    snapshotsRecent: recent, lastUpdated: nowIso,
+    frozen: doc.exists ? (doc.data().frozen||false) : false,
+    frozenAt: doc.exists ? (doc.data().frozenAt||null) : null,
+    ...extra
+  }, { merge:true });
+  await ref.collection('snapshots').doc(dateKey).set(snap, { merge:true });
+}
+async function fsFetchFullSnapshots(videoId){
+  const qs = await db.collection('videos').doc(videoId).collection('snapshots').orderBy('t','asc').get();
+  return qs.docs.map(d=>d.data());
+}
+async function fsSetFrozen(videoId, frozen, date){
+  await db.collection('videos').doc(videoId).set({ frozen, frozenAt: date }, { merge:true });
+}
+function fsListenVideos(){
+  if(unsubscribeVideos) unsubscribeVideos();
+  unsubscribeVideos = db.collection('videos').onSnapshot(qs => {
+    qs.docChanges().forEach(change => {
+      const id = change.doc.id;
+      if(change.type === 'removed'){ delete state.trackedVideos[id]; return; }
+      const data = change.doc.data();
+      const existing = state.trackedVideos[id] || {};
+      state.trackedVideos[id] = deriveVideo({ ...existing, ...data, id });
+    });
+    evaluateNotifications();
+    state.lastSync = new Date();
+    render();
+  }, err => {
+    state.notifications.push({ type:"error", msg:"Erreur de lecture Firestore : " + err.message });
+    render();
+  });
+}
+
+// ---------------------------------------------------------------------
+// SCORING & CLASSIFICATION (pur, calculé côté client à partir des données Firestore)
+// ---------------------------------------------------------------------
+function computeEngagementScore(likes, views){
+  if(!views) return 0;
+  const ratio = (likes/views)*100;
+  return Math.max(0, Math.min(100, (ratio/10)*100));
+}
+function computeVelocityScore(snapshots){
+  if(!snapshots || snapshots.length < 2) return { score:null };
+  const last = snapshots[snapshots.length-1], prev = snapshots[snapshots.length-2];
+  const dt = Math.max((new Date(last.t)-new Date(prev.t))/3600000, 0.1);
+  const viewsPerHour = (last.views - prev.views)/dt;
+  return { score: Math.max(0, Math.min(100, (viewsPerHour/5000)*100)) };
+}
+function computeFinalScore({ likes, views, snapshots, frozen }){
+  const engagement = computeEngagementScore(likes, views);
+  const velocity = computeVelocityScore(snapshots);
+  const freezeBonus = frozen ? 10 : 0;
+  const finalScore = engagement*0.5 + (velocity.score ?? 50)*0.2 + 50*0.2 + freezeBonus;
+  return { total: Math.round(Math.min(100, finalScore)), breakdown: { engagement:Math.round(engagement), velocity: velocity.score==null?null:Math.round(velocity.score), freezeBonus } };
+}
+function classify(video){
+  const age = daysSince(video.publishedAt);
+  if(age >= 15 && age <= 25) return "grande";
+  if(age >= 1 && age <= 5) return "petite";
+  return "hors-fenetre";
+}
+function detectBreakout(s){ if(!s||s.length<3) return false; const v=s.slice(-3).map(x=>x.views); return v[1]-v[0]>0 && (v[2]-v[1])>(v[1]-v[0])*1.8; }
+function detectSlowdown(s){ if(!s||s.length<3) return false; const v=s.slice(-3).map(x=>x.views); return v[1]-v[0]>0 && (v[2]-v[1])<(v[1]-v[0])*0.4; }
+function detectStagnation(s){ if(!s||s.length<7) return false; const r=s.slice(-7); const spread=Math.max(...r.map(x=>x.views))-Math.min(...r.map(x=>x.views)); const avg=r.reduce((a,x)=>a+x.views,0)/r.length; return (spread/avg)<0.02; }
+
+function deriveVideo(v){
+  const snaps = v.snapshotsRecent || [];
+  const category = classify(v);
+  const scoreData = computeFinalScore({ likes:v.likes, views:v.views, snapshots:snaps, frozen: !!v.frozen });
+  return { ...v, category, score: scoreData.total, breakdown: scoreData.breakdown,
+    breakout: detectBreakout(snaps), slowdown: detectSlowdown(snaps), stagnation: category==="grande" && detectStagnation(snaps),
+    comments: v.comments || null, fullSnapshots: v.fullSnapshots || null };
+}
+
+// ---------------------------------------------------------------------
+// SYNC MANUELLE ("Actualiser (scan complet)") — écrit directement dans Firestore
+// ---------------------------------------------------------------------
+async function syncAll(){
+  state.loading = true; state.notifications = state.notifications.filter(n=>n.type==='error'); state.pendingChoices = []; render();
+  try{
+    for(const artist of WHITELIST_ARTISTS){
+      state.loadingMsg = `Résolution de la chaîne : ${artist}…`; render();
+      let channelId;
+      try{
+        const resolution = await resolveChannelId(artist);
+        if(resolution.ambiguous){ state.pendingChoices.push({ artist, candidates: resolution.candidates, reason: resolution.reason }); continue; }
+        channelId = resolution.channelId;
+      }catch(e){ continue; }
+      state.loadingMsg = `Récupération des uploads récents : ${artist}…`; render();
+      await fetchArtistUploads(artist, channelId);
+    }
+    if(state.pendingChoices.length){
+      state.notifications.unshift({ type:"choice", msg:`${state.pendingChoices.length} artiste(s) nécessitent une confirmation de chaîne : ${state.pendingChoices.map(p=>p.artist).join(", ")}` });
+    }
+  }catch(e){ state.notifications.push({ type:"error", msg:"Erreur API : " + e.message }); }
+  state.loading = false; state.loadingMsg = ""; render();
+}
+async function fetchArtistUploads(artist, channelId){
+  const playlistId = await getUploadsPlaylistId(channelId);
+  const ids = await getRecentUploadIds(playlistId, 15);
+  const details = await getVideosDetails(ids);
+  for(const v of details){
+    const video = { id:v.id, title:v.snippet.title, channelId, channelTitle:v.snippet.channelTitle,
+      thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url, publishedAt: v.snippet.publishedAt,
+      views: parseInt(v.statistics.viewCount||0), likes: parseInt(v.statistics.likeCount||0),
+      commentCount: parseInt(v.statistics.commentCount||0), duration: parseISODuration(v.contentDetails.duration) };
+    await fsUpsertVideoAndSnapshot(video, artist);
+  }
+}
+async function resolveOneArtist(artist, channelId){
+  await fsSetChannelCache(artist, channelId);
+  state.pendingChoices = state.pendingChoices.filter(p => p.artist !== artist);
+  state.loading = true; state.loadingMsg = `Récupération des uploads récents : ${artist}…`; render();
+  try{ await fetchArtistUploads(artist, channelId); }
+  catch(e){ state.notifications.push({ type:"error", msg:`Erreur pour ${artist} : ` + e.message }); }
+  state.loading = false; state.loadingMsg = ""; render();
+}
+
+// ---------------------------------------------------------------------
+// FREEZE / VALIDATE
+// ---------------------------------------------------------------------
+async function toggleFreeze(videoId){
+  const v = state.trackedVideos[videoId];
+  if(!v || v.frozen) return;
+  const date = new Date().toISOString();
+  await fsSetFrozen(videoId, true, date);
+}
+async function unlockVideo(videoId){
+  await fsSetFrozen(videoId, false, null);
+}
+
+// ---------------------------------------------------------------------
+// ANALYSE PERSO
+// ---------------------------------------------------------------------
+function getSelectedVideo(){ return state.selectedVideoId ? state.trackedVideos[state.selectedVideoId] : null; }
+async function openAnalyse(videoId, sourceVideo=null){
+  if(sourceVideo && !state.trackedVideos[videoId]) state.trackedVideos[videoId] = deriveVideo(sourceVideo);
+  state.selectedVideoId = videoId; state.activeTab = "analyse"; state.searchError = null;
+  render();
+  const v = state.trackedVideos[videoId];
+  if(v && v.comments == null){ const res = await getVideoComments(videoId); if(state.trackedVideos[videoId]){ state.trackedVideos[videoId].comments = res; render(); } }
+  if(v && v.fullSnapshots == null){ const full = await fsFetchFullSnapshots(videoId); if(state.trackedVideos[videoId]){ state.trackedVideos[videoId].fullSnapshots = full; render(); } }
+}
+async function runManualSearch(){
+  const title = document.getElementById("search-title")?.value.trim();
+  const artist = document.getElementById("search-artist")?.value.trim();
+  state.searchError = null;
+  if(!title && !artist){ state.searchError = "Indique au moins un titre ou un artiste."; render(); return; }
+  state.loading = true; state.loadingMsg = "Recherche sur YouTube…"; render();
+  try{
+    const results = await searchVideo(title, artist);
+    if(!results.length) throw new Error("Aucune vidéo trouvée pour cette requête.");
+    const top = results[0];
+    const details = await getVideosDetails([top.id.videoId]);
+    if(!details.length) throw new Error("Impossible de récupérer les statistiques.");
+    const v = details[0];
+    let channelSubs = null;
+    try{ const chData = await ytFetch("channels", { part:"statistics", id: v.snippet.channelId }); channelSubs = chData.items?.[0] ? parseInt(chData.items[0].statistics.subscriberCount||0) : null; }catch(e){}
+    const isWhitelisted = WHITELIST_ARTISTS.some(a => (artist||"").toLowerCase() === a.toLowerCase());
+    const video = { id:v.id, title:v.snippet.title, channelId:v.snippet.channelId, channelTitle:v.snippet.channelTitle,
+      thumbnail:v.snippet.thumbnails?.medium?.url, publishedAt:v.snippet.publishedAt,
+      views:parseInt(v.statistics.viewCount||0), likes:parseInt(v.statistics.likeCount||0),
+      commentCount:parseInt(v.statistics.commentCount||0), duration:parseISODuration(v.contentDetails.duration) };
+    await fsUpsertVideoAndSnapshot(video, artist || v.snippet.channelTitle, { channelSubs, isWhitelisted });
+    await openAnalyse(video.id);
+  }catch(e){ state.searchError = e.message; }
+  state.loading = false; state.loadingMsg = ""; render();
+}
+
+// ---------------------------------------------------------------------
+// CHARTS FR
+// ---------------------------------------------------------------------
+async function syncCharts(){
+  state.loading = true; state.loadingMsg = "Récupération des tendances YouTube Musique (FR)…"; render();
+  try{ state.charts = await getTrendingMusicFR(); state.chartsLastSync = new Date(); }
+  catch(e){ state.notifications.push({ type:"error", msg:"Erreur Charts : " + e.message }); }
+  state.loading = false; state.loadingMsg = ""; render();
+}
+async function openChartEntry(c){
+  const video = { id:c.id, title:c.title, channelId:c.channelId, channelTitle:c.channelTitle, thumbnail:c.thumbnail, publishedAt:c.publishedAt, views:c.views, likes:c.likes, commentCount:c.commentCount, duration:c.duration };
+  if(!state.trackedVideos[c.id]) await fsUpsertVideoAndSnapshot(video, c.channelTitle);
+  await openAnalyse(c.id);
+}
+
+// ---------------------------------------------------------------------
+// FORMAT HELPERS
+// ---------------------------------------------------------------------
+function fmtNum(n){ if(n==null) return "—"; if(n>=1e6) return (n/1e6).toFixed(1).replace(/\.0$/,"")+"M"; if(n>=1e3) return (n/1e3).toFixed(1).replace(/\.0$/,"")+"k"; return String(n); }
+function fmtAge(publishedAt){ const d=daysSince(publishedAt); return d<1 ? Math.round(d*24)+"h" : Math.round(d)+"j"; }
+function fmtDate(iso){ return new Date(iso).toLocaleDateString('fr-FR', {day:'2-digit',month:'short',year:'numeric'}); }
+function scoreColor(score){ if(score>=70) return COLORS.green; if(score>=40) return COLORS.amber; return COLORS.red; }
+function scoreRing(score, size=56){
+  const r=(size-8)/2, c=2*Math.PI*r, offset=c-(score/100)*c;
+  return `<svg width="${size}" height="${size}" class="score-ring"><circle cx="${size/2}" cy="${size/2}" r="${r}" stroke="#2A2A2A" stroke-width="5" fill="none"/><circle cx="${size/2}" cy="${size/2}" r="${r}" stroke="${scoreColor(score)}" stroke-width="5" fill="none" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${offset}"/></svg>`;
+}
+function sparkline(snapshots, key='views', w=100, h=28){
+  if(!snapshots || snapshots.length < 2) return `<div class="text-[10px] text-[var(--txt-dim)]" style="height:${h}px">collecte en cours…</div>`;
+  const vals = snapshots.slice(-10).map(s=>s[key]||0);
+  const min=Math.min(...vals), max=Math.max(...vals), range=(max-min)||1;
+  const pts = vals.map((v,i)=>{ const x=(i/(vals.length-1))*w; const y=h-((v-min)/range)*h; return `${x.toFixed(1)},${y.toFixed(1)}`; }).join(" ");
+  const color = vals[vals.length-1] >= vals[0] ? COLORS.green : COLORS.red;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+function internalRank(v){
+  if(v.category !== "grande" && v.category !== "petite") return null;
+  const pool = Object.values(state.trackedVideos).filter(x => x.category === v.category).sort((a,b)=>b.score-a.score);
+  const idx = pool.findIndex(x => x.id === v.id);
+  return idx === -1 ? null : idx+1;
+}
+
+// ---------------------------------------------------------------------
+// CARTES / EMPTY STATES / NOTIFS
+// ---------------------------------------------------------------------
+function videoCard(v){
+  const catBadge = v.category === "grande" ? `<span class="badge bg-red-900/40 text-red-300 border border-red-800">GRANDE TENDANCE</span>`
+    : v.category === "petite" ? `<span class="badge bg-blue-900/40 text-blue-300 border border-blue-800">RADAR HYPE J+${Math.round(daysSince(v.publishedAt))}</span>`
+    : `<span class="badge bg-gray-800 text-gray-400 border border-gray-700">HORS FENÊTRE</span>`;
+  return `
+  <div class="card card-clickable p-4 flex flex-col gap-3 relative overflow-hidden ${v.frozen?'frozen-shine':''}" onclick="openAnalyse('${v.id}')">
+    ${v.breakout ? `<div class="absolute top-3 right-3 pulse-dot w-2 h-2 rounded-full bg-green-400"></div>` : ""}
+    ${v.frozen ? `<div class="absolute top-3 right-3 text-red-500"><i class="fa-solid fa-lock"></i></div>` : ""}
+    <div class="flex gap-3">
+      <img src="${v.thumbnail}" class="w-24 h-16 object-cover rounded-lg border border-[#2a2a2a]" />
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-semibold truncate" title="${v.title}">${v.title}</p>
+        <p class="text-xs text-[var(--txt-dim)] font-mono">${v.artist} · ${fmtAge(v.publishedAt)}</p>
+        <div class="mt-1.5">${catBadge}</div>
+      </div>
+      <div class="flex flex-col items-center justify-center relative shrink-0">${scoreRing(v.score)}<span class="absolute font-display text-sm" style="color:${scoreColor(v.score)}">${v.score}</span></div>
+    </div>
+    <div class="border-t border-[#2a2a2a] pt-2">${sparkline(v.snapshotsRecent)}</div>
+    <div class="grid grid-cols-3 gap-2 text-center font-mono text-xs">
+      <div><p class="text-[var(--txt-dim)]">Vues</p><p class="font-semibold">${fmtNum(v.views)}</p></div>
+      <div><p class="text-[var(--txt-dim)]">Likes</p><p class="font-semibold">${fmtNum(v.likes)}</p></div>
+      <div><p class="text-[var(--txt-dim)]">Engagement</p><p class="font-semibold">${v.breakdown.engagement}%</p></div>
+    </div>
+    <div class="flex items-center justify-between gap-2 text-xs">
+      <span class="text-[var(--txt-dim)]">${v.breakdown.velocity!=null ? `<i class="fa-solid fa-arrow-trend-${v.breakdown.velocity>=50?'up text-green-400':'down text-red-400'} mr-1"></i>vélocité ${v.breakdown.velocity}` : 'vélocité : en mesure…'}</span>
+      <button onclick="event.stopPropagation(); toggleFreeze('${v.id}')" ${v.frozen?'disabled':''} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition ${v.frozen ? 'bg-red-900/50 text-red-300 cursor-default' : 'bg-[#262626] text-[var(--txt-dim)] hover:text-white hover:bg-red-600'}">
+        <i class="fa-solid ${v.frozen?'fa-lock':'fa-lock-open'} mr-1"></i>${v.frozen ? 'Figé' : 'Figer / Valider'}
+      </button>
+    </div>
+  </div>`;
+}
+function emptyState(msg, icon="fa-satellite-dish"){ return `<div class="col-span-full flex flex-col items-center justify-center py-16 text-[var(--txt-dim)]"><i class="fa-solid ${icon} text-3xl mb-3 opacity-40"></i><p class="text-sm text-center max-w-xs">${msg}</p></div>`; }
+function notifIcon(type){ return { breakout:`<i class="fa-solid fa-bolt text-green-400"></i>`, late:`<i class="fa-solid fa-triangle-exclamation text-red-400"></i>`, stagnation:`<i class="fa-solid fa-pause text-amber-400"></i>`, choice:`<i class="fa-solid fa-circle-question text-blue-400"></i>`, error:`<i class="fa-solid fa-circle-exclamation text-gray-400"></i>` }[type] || `<i class="fa-solid fa-bell text-gray-400"></i>`; }
+function notifClass(type){ return { breakout:"alert-breakout", late:"alert-late", stagnation:"alert-stagnation", choice:"alert-choice" }[type] || ""; }
+function evaluateNotifications(){
+  const fresh = [];
+  Object.values(state.trackedVideos).forEach(v => {
+    if(v.frozen) return;
+    if(v.breakout) fresh.push({ type:"breakout", video:v, msg:`Montée fracassante détectée sur "${v.title}" (${v.artist})` });
+    if(v.slowdown) fresh.push({ type:"late", video:v, msg:`Saturation imminente sur "${v.title}" (${v.artist}) — la croissance ralentit` });
+    if(v.stagnation) fresh.push({ type:"stagnation", video:v, msg:`"${v.title}" stagne depuis 7 mesures — avis requis` });
+  });
+  const others = state.notifications.filter(n => n.type==="choice" || n.type==="error");
+  state.notifications = [...others, ...fresh];
+}
+
+// ---------------------------------------------------------------------
+// RENDER — LAYOUT
+// ---------------------------------------------------------------------
+function render(){
+  const root = document.getElementById("app");
+  if(state.authLoading){ root.innerHTML = `<div class="min-h-screen flex items-center justify-center"><i class="fa-solid fa-circle-notch fa-spin text-2xl text-[var(--txt-dim)]"></i></div>`; return; }
+  if(!state.user){ root.innerHTML = renderLoginScreen(); bindLoginScreen(); return; }
+
+  const all = Object.values(state.trackedVideos);
+  const filterOk = v => !state.quickFilter || v.artist.toLowerCase().includes(state.quickFilter.toLowerCase());
+  const grandes = all.filter(v=>v.category==="grande" && !v.frozen && filterOk(v)).sort((a,b)=>b.score-a.score);
+  const petites = all.filter(v=>v.category==="petite" && !v.frozen && filterOk(v)).sort((a,b)=>b.score-a.score);
+  const figes = all.filter(v=>v.frozen).sort((a,b)=> new Date(b.frozenAt||0) - new Date(a.frozenAt||0));
+  const notifCount = state.notifications.length + state.pendingChoices.length;
+
+  root.innerHTML = `
+  <div class="flex min-h-screen">
+    <aside class="w-72 shrink-0 border-r border-[#1f1f1f] bg-[var(--panel)] flex flex-col">
+      <div class="p-5 border-b border-[#1f1f1f]">
+        <div class="flex items-center gap-2">
+          <div class="w-9 h-9 rounded-lg bg-red-600 flex items-center justify-center"><i class="fa-brands fa-youtube text-white"></i></div>
+          <div><p class="font-display text-sm tracking-tight">YT TREND PULSE</p><p class="text-[10px] text-[var(--txt-dim)] font-mono">scène francophone · live Firestore</p></div>
+        </div>
+      </div>
+      <nav class="p-3 flex flex-col gap-1">
+        ${tabButton("grandes","fa-chart-line","Grandes Tendances", grandes.length)}
+        ${tabButton("petites","fa-bolt","Petites Tendances", petites.length)}
+        ${tabButton("figes","fa-lock","Sons Figés", figes.length)}
+        ${tabButton("analyse","fa-magnifying-glass-chart","Analyse perso")}
+        ${tabButton("charts","fa-ranking-star","Charts YouTube (FR)", state.charts.length || null)}
+      </nav>
+      <div class="px-3 mt-1">
+        <input type="text" placeholder="Filtrer par artiste" list="wl-artists" value="${state.quickFilter}" oninput="state.quickFilter=this.value; render()" class="w-full px-3 py-2 rounded-lg text-xs" />
+        <datalist id="wl-artists">${WHITELIST_ARTISTS.map(a=>`<option value="${a}">`).join("")}</datalist>
+      </div>
+      <div class="p-3 mt-auto border-t border-[#1f1f1f] flex flex-col gap-2">
+        <button onclick="syncAll()" class="w-full py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition flex items-center justify-center gap-2" ${state.loading?'disabled':''}>
+          <i class="fa-solid fa-rotate ${state.loading?'animate-spin':''}"></i> ${state.loading ? 'Synchronisation…' : 'Actualiser (scan complet)'}
+        </button>
+        <div class="text-[10px] text-center text-[var(--txt-dim)] font-mono flex items-center justify-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full pulse-dot green bg-green-400"></span> Collecte auto GitHub Actions active
+        </div>
+        ${state.lastSync ? `<p class="text-[10px] text-center text-[var(--txt-dim)] font-mono">Dernière donnée reçue : ${state.lastSync.toLocaleTimeString('fr-FR')}</p>` : ""}
+        <p class="text-[10px] text-center text-[var(--txt-dim)] truncate">${state.user.email}</p>
+        <button onclick="doSignOut()" class="text-[10px] text-center text-[var(--txt-dim)] hover:text-white underline">Se déconnecter</button>
+      </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col min-w-0">
+      <header class="px-6 py-4 border-b border-[#1f1f1f] flex items-center justify-between sticky top-0 bg-[var(--bg)] z-10">
+        <div><h1 class="font-display text-lg">${headerTitle()}</h1><p class="text-xs text-[var(--txt-dim)] mt-0.5">${headerSubtitle()}</p></div>
+        <button onclick="toggleNotifPanel()" class="relative w-10 h-10 rounded-lg bg-[#1a1a1a] hover:bg-[#242424] flex items-center justify-center transition">
+          <i class="fa-solid fa-bell text-[var(--txt-dim)]"></i>
+          ${notifCount ? `<span class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-[10px] flex items-center justify-center font-bold">${notifCount}</span>` : ""}
+        </button>
+      </header>
+      <div class="flex-1 overflow-y-auto p-6 scrollbar-thin fade-in">
+        ${state.loading ? `<div class="mb-4 text-xs font-mono text-[var(--txt-dim)] flex items-center gap-2"><i class="fa-solid fa-circle-notch fa-spin"></i>${state.loadingMsg}</div>` : ""}
+        ${renderActiveTab(grandes, petites, figes)}
+      </div>
+    </main>
+
+    <aside class="${state.notifPanelOpen?'translate-x-0':'translate-x-full'} fixed top-0 right-0 h-full w-80 bg-[var(--panel)] border-l border-[#1f1f1f] transition-transform duration-300 z-30 flex flex-col">
+      <div class="p-4 border-b border-[#1f1f1f] flex items-center justify-between"><p class="font-display text-sm">NOTIFICATIONS</p><button onclick="toggleNotifPanel()" class="text-[var(--txt-dim)] hover:text-white"><i class="fa-solid fa-xmark"></i></button></div>
+      <div class="flex-1 overflow-y-auto p-3 flex flex-col gap-2 scrollbar-thin">
+        ${state.pendingChoices.map(p => `
+          <div class="notif-card card p-3" style="border-left-color:#3B82F6">
+            <p class="text-xs font-semibold mb-2"><i class="fa-solid fa-circle-question text-blue-400 mr-1"></i>Quelle chaîne pour "${p.artist}" ?</p>
+            <div class="flex flex-col gap-1.5">
+              ${p.candidates.length ? p.candidates.map(c => `<button onclick="resolveOneArtist('${p.artist.replace(/'/g,"\\'")}','${c.channelId}')" class="flex items-center gap-2 p-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#262626] text-left transition"><img src="${c.thumbnail||''}" class="w-6 h-6 rounded-full" /><span class="flex-1 text-[11px] truncate">${c.title}</span><span class="text-[10px] font-mono text-[var(--txt-dim)]">${c.subs!=null ? fmtNum(c.subs)+' abo.' : ''}</span></button>`).join("") : `<p class="text-[11px] text-[var(--txt-dim)]">${p.reason}</p>`}
+            </div>
+          </div>`).join("")}
+        ${state.notifications.length ? state.notifications.map(n => `
+          <div class="notif-card ${notifClass(n.type)} card p-3">
+            <div class="flex items-start gap-2"><div class="mt-0.5">${notifIcon(n.type)}</div>
+              <div class="flex-1"><p class="text-xs">${n.msg}</p>${n.video && !n.video.frozen ? `<button onclick="toggleFreeze('${n.video.id}')" class="mt-2 text-[10px] px-2 py-1 rounded bg-[#262626] hover:bg-red-600 transition">Lancer / Valider</button>` : ""}</div>
+            </div>
+          </div>`).join("") : (state.pendingChoices.length ? "" : emptyState("Aucune alerte pour le moment.", "fa-bell-slash"))}
+      </div>
+    </aside>
+  </div>`;
+
+  if(state.activeTab === "analyse") requestAnimationFrame(renderAnalyseChart);
+}
+
+function tabButton(id, icon, label, count){
+  const active = state.activeTab === id;
+  return `<button onclick="setTab('${id}')" class="tab-btn flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-left w-full ${active?'active':'text-[var(--txt-dim)]'}"><i class="fa-solid ${icon} w-4"></i><span class="flex-1">${label}</span>${count!=null ? `<span class="font-mono text-xs opacity-70">${count}</span>` : ""}</button>`;
+}
+function headerTitle(){ return { grandes:"Grandes Tendances", petites:"Petites Tendances — Radar à Hype", figes:"🔒 Sons Figés", analyse:"Analyse perso", charts:"Charts YouTube (FR)" }[state.activeTab]; }
+function headerSubtitle(){
+  return {
+    grandes:"Morceaux entre 15 et 25 jours depuis la sortie — collecte serveur automatique",
+    petites:"Nouveautés J+1 à J+5 des artistes 1M+ abonnés",
+    figes:"Morceaux verrouillés (+10 pts), suivis indéfiniment par le serveur",
+    analyse:"Clique un morceau, ou cherche librement (tout créateur accepté)",
+    charts:"Tendances officielles YouTube, catégorie Musique, France — proxy réel le plus proche de charts.youtube.com"
+  }[state.activeTab];
+}
+function renderActiveTab(grandes, petites, figes){
+  const hasData = Object.keys(state.trackedVideos).length > 0;
+  if(state.activeTab === "grandes"){
+    if(!hasData) return emptyState("En attente de la première collecte (automatique ou via le bouton Actualiser).", "fa-satellite-dish");
+    if(!grandes.length) return emptyState("Aucun morceau dans la fenêtre 15-25 jours actuellement.", "fa-chart-line");
+    return `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">${grandes.map(videoCard).join("")}</div>`;
+  }
+  if(state.activeTab === "petites"){
+    if(!hasData) return emptyState("En attente de la première collecte (automatique ou via le bouton Actualiser).", "fa-satellite-dish");
+    if(!petites.length) return emptyState("Aucune sortie récente (J+1 à J+5) détectée.", "fa-bolt");
+    return `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">${petites.map(videoCard).join("")}</div>`;
+  }
+  if(state.activeTab === "figes"){
+    if(!figes.length) return emptyState('Aucun morceau figé pour l\'instant.', "fa-lock");
+    return `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">${figes.map(v => `<div class="relative">${videoCard(v)}<p class="text-[10px] text-[var(--txt-dim)] font-mono mt-1 px-1">Figé le ${v.frozenAt?fmtDate(v.frozenAt):'—'} · <button onclick="unlockVideo('${v.id}')" class="underline hover:text-white">déverrouiller</button></p></div>`).join("")}</div>`;
+  }
+  if(state.activeTab === "charts") return renderChartsTab();
+  return renderAnalyseTab();
+}
+
+function renderChartsTab(){
+  return `<div class="max-w-4xl">
+    <div class="flex items-center justify-between mb-4">
+      <p class="text-xs text-[var(--txt-dim)] font-mono">${state.chartsLastSync ? 'Dernière sync : ' + state.chartsLastSync.toLocaleTimeString('fr-FR') : "Pas encore synchronisé"}</p>
+      <button onclick="syncCharts()" class="px-3 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#242424] text-xs font-semibold transition" ${state.loading?'disabled':''}><i class="fa-solid fa-rotate ${state.loading?'animate-spin':''} mr-1"></i>Charger les tendances FR</button>
+    </div>
+    ${!state.charts.length ? emptyState('Clique sur "Charger les tendances FR".', "fa-ranking-star") : `<div class="flex flex-col gap-2">${state.charts.map(c => `
+      <div class="card card-clickable p-3 flex items-center gap-3" onclick='openChartEntry(${JSON.stringify(c).replace(/'/g,"&apos;")})'>
+        <span class="font-display text-lg w-8 text-center text-[var(--txt-dim)]">${c.rank}</span>
+        <img src="${c.thumbnail}" class="w-16 h-11 object-cover rounded-md border border-[#2a2a2a]" />
+        <div class="flex-1 min-w-0"><p class="text-sm font-semibold truncate">${c.title}</p><p class="text-xs text-[var(--txt-dim)] font-mono">${c.channelTitle} · ${fmtAge(c.publishedAt)}</p></div>
+        <div class="text-right font-mono text-xs"><p class="font-semibold">${fmtNum(c.views)} vues</p><p class="text-[var(--txt-dim)]">${fmtNum(c.likes)} likes</p></div>
+      </div>`).join("")}</div>`}
+  </div>`;
+}
+
+function renderAnalyseTab(){
+  const v = getSelectedVideo();
+  return `<div class="max-w-3xl">
+    <div class="card p-4 mb-5">
+      <p class="text-xs text-[var(--txt-dim)] mb-3">Recherche libre — tout créateur accepté, y compris hors liste blanche.</p>
+      <div class="flex gap-2">
+        <input id="search-title" type="text" placeholder="Titre du morceau" class="flex-1 px-3 py-2 rounded-lg text-sm" onkeydown="if(event.key==='Enter') runManualSearch()" />
+        <input id="search-artist" type="text" placeholder="Artiste / créateur" class="flex-1 px-3 py-2 rounded-lg text-sm" onkeydown="if(event.key==='Enter') runManualSearch()" />
+        <button onclick="runManualSearch()" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition"><i class="fa-solid fa-magnifying-glass"></i></button>
+      </div>
+      ${state.searchError ? `<p class="text-xs text-red-400 mt-2">${state.searchError}</p>` : ""}
+    </div>
+    ${!v ? emptyState("Clique sur un morceau dans un autre onglet, ou cherche un titre ci-dessus.", "fa-magnifying-glass-chart") : renderAnalyseDetail(v)}
+  </div>`;
+}
+function renderAnalyseDetail(v){
+  const rank = internalRank(v);
+  const wlBadge = v.isWhitelisted != null ? (v.isWhitelisted ? `<span class="badge bg-red-900/40 text-red-300 border border-red-800">LISTE BLANCHE 1M+</span>` : `<span class="badge bg-gray-800 text-gray-400 border border-gray-700">HORS LISTE BLANCHE</span>`) : "";
+  const firstDay = v.fullSnapshots && v.fullSnapshots.length ? Math.max(1, Math.round((new Date(v.fullSnapshots[0].t) - new Date(v.publishedAt))/86400000)+1) : null;
+  return `
+  <div class="card p-5 mb-4">
+    <div class="flex gap-4 items-start">
+      <img src="${v.thumbnail}" class="w-32 h-20 object-cover rounded-lg border border-[#2a2a2a]" />
+      <div class="flex-1 min-w-0">
+        <p class="text-base font-semibold">${v.title}</p>
+        <p class="text-xs text-[var(--txt-dim)] font-mono mt-0.5">${v.artist}${v.channelSubs!=null ? ' · '+fmtNum(v.channelSubs)+' abonnés' : ''}</p>
+        <div class="mt-2 flex items-center gap-2 flex-wrap">${wlBadge}${v.frozen ? `<span class="badge bg-red-600 text-white"><i class="fa-solid fa-lock mr-1"></i>FIGÉ</span>` : ""}</div>
+      </div>
+      <div class="flex flex-col items-center shrink-0 relative">${scoreRing(v.score, 64)}<span class="absolute font-display text-base" style="color:${scoreColor(v.score)}">${v.score}</span></div>
+    </div>
+    <div class="grid grid-cols-5 gap-2 text-center font-mono text-xs mt-5 border-t border-[#2a2a2a] pt-4">
+      <div><p class="text-[var(--txt-dim)]">Vues</p><p class="font-semibold text-sm">${fmtNum(v.views)}</p></div>
+      <div><p class="text-[var(--txt-dim)]">Likes</p><p class="font-semibold text-sm">${fmtNum(v.likes)}</p></div>
+      <div><p class="text-[var(--txt-dim)]">Commentaires</p><p class="font-semibold text-sm">${fmtNum(v.commentCount)}</p></div>
+      <div><p class="text-[var(--txt-dim)]">Âge</p><p class="font-semibold text-sm">${fmtAge(v.publishedAt)}</p></div>
+      <div><p class="text-[var(--txt-dim)]">Position interne</p><p class="font-semibold text-sm">${rank ? '#'+rank : '—'}</p></div>
+    </div>
+    <div class="flex justify-end mt-4">
+      <button onclick="toggleFreeze('${v.id}')" ${v.frozen?'disabled':''} class="px-4 py-2 rounded-lg text-xs font-semibold transition ${v.frozen ? 'bg-red-900/50 text-red-300 cursor-default' : 'bg-[#262626] text-[var(--txt-dim)] hover:text-white hover:bg-red-600'}"><i class="fa-solid ${v.frozen?'fa-lock':'fa-lock-open'} mr-1"></i>${v.frozen ? 'Figé' : 'Figer / Valider (+10 pts)'}</button>
+    </div>
+  </div>
+
+  <div class="card p-4 mb-4">
+    <p class="text-xs text-[var(--txt-dim)] mb-1">Courbe Vues / Likes / Commentaires — depuis le début du suivi</p>
+    <p class="text-[10px] text-[var(--txt-dim)] mb-3">${v.fullSnapshots == null ? "Chargement de l'historique complet…" : (firstDay ? `Suivi démarré à J${firstDay} (l'API YouTube ne fournit pas l'historique antérieur au début du suivi).` : 'Pas encore assez de points pour tracer une courbe — reviens après la prochaine collecte automatique.')}</p>
+    <canvas id="analyse-chart" height="110"></canvas>
+  </div>
+
+  <div class="card p-4"><p class="text-xs text-[var(--txt-dim)] mb-2"><i class="fa-solid fa-comments mr-1"></i>Commentaires (réels, via API)</p>${renderComments(v)}</div>`;
+}
+function renderComments(v){
+  if(v.comments == null) return `<div class="skeleton h-16 rounded-lg"></div>`;
+  if(v.comments.error) return `<p class="text-xs text-[var(--txt-dim)]">${v.comments.error}</p>`;
+  if(!v.comments.items.length) return `<p class="text-xs text-[var(--txt-dim)]">Aucun commentaire trouvé.</p>`;
+  return v.comments.items.map(c => `<div class="comment-item"><div class="flex items-start gap-2"><img src="${c.authorImg}" class="w-7 h-7 rounded-full shrink-0" /><div class="flex-1 min-w-0"><p class="text-xs font-semibold">${c.author} <span class="text-[10px] text-[var(--txt-dim)] font-normal">· ${fmtDate(c.publishedAt)}</span></p><p class="text-xs text-[var(--txt-dim)] mt-0.5">${(c.text||"").slice(0,280)}${(c.text||"").length>280?'…':''}</p><p class="text-[10px] text-[var(--txt-dim)] mt-1"><i class="fa-solid fa-thumbs-up mr-1"></i>${fmtNum(c.likeCount)}</p></div></div></div>`).join("");
+}
+
+function renderAnalyseChart(){
+  const v = getSelectedVideo();
+  const ctx = document.getElementById("analyse-chart");
+  if(!v || !ctx || !v.fullSnapshots || !v.fullSnapshots.length) return;
+  if(analyseChartInstance){ analyseChartInstance.destroy(); analyseChartInstance = null; }
+  const pubTime = new Date(v.publishedAt).getTime();
+  const labels = v.fullSnapshots.map(s => "J" + Math.max(1, Math.round((new Date(s.t).getTime()-pubTime)/86400000)+1));
+  analyseChartInstance = new Chart(ctx, {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Vues', data:v.fullSnapshots.map(s=>s.views), borderColor:COLORS.red, backgroundColor:'rgba(255,0,0,0.08)', tension:0.3, fill:true, yAxisID:'y' },
+      { label:'Likes', data:v.fullSnapshots.map(s=>s.likes), borderColor:COLORS.blue, backgroundColor:'rgba(59,130,246,0.08)', tension:0.3, fill:true, yAxisID:'y1' },
+      { label:'Commentaires', data:v.fullSnapshots.map(s=>s.commentCount||0), borderColor:COLORS.amber, backgroundColor:'rgba(255,176,32,0.08)', tension:0.3, fill:true, yAxisID:'y2' },
+    ]},
+    options:{ responsive:true, interaction:{ mode:'index', intersect:false },
+      scales:{ y:{ position:'left', ticks:{ color:'#9A9A9A' }, grid:{ color:'#222' } }, y1:{ position:'right', ticks:{ color:'#9A9A9A' }, grid:{ display:false } }, y2:{ display:false }, x:{ ticks:{ color:'#9A9A9A' }, grid:{ display:false } } },
+      plugins:{ legend:{ labels:{ color:'#F2F2F2' } } } }
+  });
+}
+
+// ---------------------------------------------------------------------
+// AUTHENTIFICATION
+// ---------------------------------------------------------------------
+function renderLoginScreen(){
+  return `<div class="min-h-screen flex items-center justify-center px-6">
+    <div class="max-w-md w-full">
+      <div class="flex items-center gap-2 mb-6 justify-center"><div class="w-10 h-10 rounded-lg bg-red-600 flex items-center justify-center"><i class="fa-brands fa-youtube text-white"></i></div><p class="font-display text-lg">YT TREND PULSE</p></div>
+      <div class="card p-6 glow-red">
+        <p class="text-sm font-semibold mb-1">Connexion</p>
+        <p class="text-xs text-[var(--txt-dim)] mb-4">Accès réservé — connecte-toi avec l'email et le mot de passe configurés dans Firebase Authentication.</p>
+        <input id="login-email" type="email" placeholder="email@exemple.com" class="w-full px-3 py-2.5 rounded-lg text-sm mb-2" />
+        <input id="login-password" type="password" placeholder="Mot de passe" class="w-full px-3 py-2.5 rounded-lg text-sm mb-3" />
+        <button id="login-submit" class="w-full py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition">Se connecter</button>
+        <p id="login-error" class="text-xs text-red-400 mt-2 hidden"></p>
+      </div>
+    </div>
+  </div>`;
+}
+function bindLoginScreen(){
+  const submit = document.getElementById("login-submit");
+  const doLogin = async () => {
+    const email = document.getElementById("login-email").value.trim();
+    const password = document.getElementById("login-password").value;
+    const errEl = document.getElementById("login-error");
+    errEl.classList.add("hidden");
+    try{ await auth.signInWithEmailAndPassword(email, password); }
+    catch(e){ errEl.textContent = "Connexion refusée : " + e.message; errEl.classList.remove("hidden"); }
+  };
+  submit.onclick = doLogin;
+  document.getElementById("login-password").addEventListener("keydown", e => { if(e.key==='Enter') doLogin(); });
+}
+async function doSignOut(){
+  if(unsubscribeVideos) unsubscribeVideos();
+  state.trackedVideos = {}; state.selectedVideoId = null;
+  await auth.signOut();
+}
+
+// ---------------------------------------------------------------------
+// UI ACTIONS
+// ---------------------------------------------------------------------
+function setTab(id){ state.activeTab = id; render(); }
+function toggleNotifPanel(){ state.notifPanelOpen = !state.notifPanelOpen; render(); }
+
+// ---------------------------------------------------------------------
+// BOOT
+// ---------------------------------------------------------------------
+state.authLoading = true;
+auth.onAuthStateChanged(user => {
+  state.authLoading = false;
+  state.user = user;
+  if(user){ fsListenVideos(); }
+  else if(unsubscribeVideos){ unsubscribeVideos(); unsubscribeVideos = null; }
+  render();
+});
+render();
+</script>
+</body>
+</html>
