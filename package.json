@@ -1,16 +1,13 @@
 {
-  "name": "yt-trend-pulse-collector",
+  "name": "yt-trend-pulse-sync",
   "version": "1.0.0",
-  "private": true,
-  "description": "Collecte automatique YouTube -> Firestore pour YT Trend Pulse (exécuté par GitHub Actions)",
-  "main": "collect.js",
+  "description": "Synchronisation automatique YouTube pour YT Trend Pulse",
+  "main": "scripts/sync.js",
   "scripts": {
-    "collect": "node collect.js"
+    "sync": "node scripts/sync.js"
   },
   "dependencies": {
-    "firebase-admin": "^12.6.0"
-  },
-  "engines": {
-    "node": ">=20"
+    "firebase-admin": "^11.11.0",
+    "googleapis": "^133.0.0"
   }
 }
