@@ -1,9 +1,15 @@
 const admin = require('firebase-admin');
 const { google } = require('googleapis');
 
+// ============================================================
+// RÉCUPÉRATION DES SECRETS GITHUB
+// ============================================================
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 
+// ============================================================
+// INITIALISATION FIREBASE
+// ============================================================
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   projectId: 'yt-trend-pulse'
@@ -15,14 +21,13 @@ const youtube = google.youtube({
   auth: YOUTUBE_API_KEY
 });
 
+// ============================================================
+// FONCTIONS UTILITAIRES
+// ============================================================
 function parseISODuration(iso) {
   const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
   if (!m) return 0;
   return (parseInt(m[1]||0) * 3600) + (parseInt(m[2]||0) * 60) + parseInt(m[3]||0);
-}
-
-function daysSince(dateStr) {
-  return (Date.now() - new Date(dateStr).getTime()) / 86400000;
 }
 
 function computeEngagementScore(likes, views) {
@@ -31,6 +36,9 @@ function computeEngagementScore(likes, views) {
   return Math.max(0, Math.min(100, (ratio / 10) * 100));
 }
 
+// ============================================================
+// APPELS YOUTUBE API
+// ============================================================
 async function getUploadsPlaylistId(channelId) {
   const res = await youtube.channels.list({
     part: 'contentDetails',
@@ -63,6 +71,9 @@ async function getVideosDetails(ids) {
   return out;
 }
 
+// ============================================================
+// FIRESTORE - SAUVEGARDE DES VIDÉOS
+// ============================================================
 async function fsUpsertVideo(video, artist) {
   const ref = db.collection('videos').doc(video.id);
   const nowIso = new Date().toISOString();
@@ -108,6 +119,9 @@ async function fsUpsertVideo(video, artist) {
   await ref.collection('snapshots').doc(dateKey).set(snap, { merge: true });
 }
 
+// ============================================================
+// SYNCHRONISATION PRINCIPALE
+// ============================================================
 async function syncAll() {
   console.log('🚀 Début de la synchronisation...');
   
@@ -152,6 +166,9 @@ async function syncAll() {
   console.log(`✅ Synchronisation terminée : ${totalVideos} vidéo(s) mises à jour.`);
 }
 
+// ============================================================
+// EXÉCUTION
+// ============================================================
 syncAll()
   .then(() => {
     console.log('🎉 Sync terminée avec succès');
