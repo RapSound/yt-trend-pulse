@@ -1,0 +1,56 @@
+name: 🎬 Synchronisation YouTube Trend Pulse
+
+on:
+  schedule:
+    # Exécuter toutes les 6 heures
+    - cron: '0 */6 * * *'
+  
+  # Permettre une exécution manuelle depuis GitHub
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Synchroniser les vidéos YouTube
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+    
+    steps:
+      - name: 📥 Cloner le repository
+        uses: actions/checkout@v4
+      
+      - name: 📦 Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: 📚 Installer les dépendances
+        run: npm ci
+        working-directory: .
+      
+      - name: 🔑 Configurer les secrets
+        run: |
+          echo "✅ Secrets configurés"
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      
+      - name: 🚀 Lancer la synchronisation
+        run: npm run sync
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      
+      - name: 📧 Notifier en cas d'erreur
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ La synchronisation YouTube a échoué. Vérifie les logs.'
+            })

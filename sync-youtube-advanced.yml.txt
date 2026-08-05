@@ -1,0 +1,135 @@
+name: 🎬 YT Trend Pulse - Sync Avancée
+
+on:
+  schedule:
+    # Lundi à vendredi à 9h, 15h et 21h
+    - cron: '0 9,15,21 * * 1-5'
+    # Samedi et dimanche une fois par jour à 12h
+    - cron: '0 12 * * 0,6'
+  
+  workflow_dispatch:
+    inputs:
+      log_level:
+        description: 'Niveau de log'
+        required: true
+        default: 'info'
+        type: choice
+        options:
+          - debug
+          - info
+          - warn
+          - error
+
+env:
+  NODE_VERSION: '18'
+  LOG_LEVEL: ${{ github.event.inputs.log_level || 'info' }}
+
+jobs:
+  sync:
+    name: 🔄 Synchronisation YouTube
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      actions: read
+    
+    steps:
+      - name: 📥 Cloner le repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: 📚 Installer les dépendances
+        run: npm ci --prefer-offline
+      
+      - name: 🚀 Lancer la synchronisation (avec retry)
+        id: sync
+        uses: nick-invision/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: npm run sync
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          LOG_LEVEL: ${{ env.LOG_LEVEL }}
+      
+      - name: 📊 Générer un résumé
+        if: always()
+        run: |
+          cat > sync_summary.txt << 'EOF'
+          ======================================
+          📋 Résumé de Synchronisation
+          ======================================
+          Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          Statut: ${{ job.status }}
+          Duration: ${{ job.status == 'success' && '✅' || '❌' }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          ======================================
+          EOF
+          cat sync_summary.txt
+      
+      - name: ✅ Succès - Créer un commit optionnel
+        if: success()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "YT Sync Action"
+          echo "Sync completed at $(date)" >> sync_log.txt
+          git add sync_log.txt 2>/dev/null || true
+          git commit -m "🔄 Auto-sync completed [skip ci]" 2>/dev/null || true
+          git push 2>/dev/null || true
+      
+      - name: ❌ Erreur - Créer une issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔴 Sync YouTube Échouée',
+              body: `La synchronisation a échoué.\n\n**Run:** ${context.runId}\n**Log:** ${context.server_url}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              labels: ['bug', 'sync']
+            })
+      
+      - name: 📧 Notification Discord (optionnel)
+        if: always() && secrets.DISCORD_WEBHOOK
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
+          status: ${{ job.status }}
+          description: |
+            **YT Trend Pulse Sync**
+            Status: ${{ job.status }}
+            Branch: ${{ github.ref_name }}
+          title: 'YouTube Synchronization'
+
+  stats:
+    name: 📈 Générer des statistiques
+    runs-on: ubuntu-latest
+    needs: sync
+    if: success()
+    
+    steps:
+      - name: 📥 Cloner le repository
+        uses: actions/checkout@v4
+      
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      
+      - name: 📊 Générer rapport
+        run: |
+          echo "## 📊 Rapport Sync" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ✅ Succès" >> $GITHUB_STEP_SUMMARY
+          echo "- **Job ID:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
