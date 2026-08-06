@@ -99,18 +99,6 @@ jobs:
               body: `La synchronisation a échoué.\n\n**Run:** ${context.runId}\n**Log:** ${context.server_url}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               labels: ['bug', 'sync']
             })
-      
-      - name: 📧 Notification Discord (optionnel)
-        if: always() && secrets.DISCORD_WEBHOOK
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
-          status: ${{ job.status }}
-          description: |
-            **YT Trend Pulse Sync**
-            Status: ${{ job.status }}
-            Branch: ${{ github.ref_name }}
-          title: 'YouTube Synchronization'
 
   stats:
     name: 📈 Générer des statistiques
