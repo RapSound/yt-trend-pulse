@@ -1,56 +1,36 @@
-name: 🎬 Synchronisation YouTube Trend Pulse
+name: YouTube Trend Pulse Sync
 
 on:
   schedule:
-    # Exécuter toutes les 6 heures
-    - cron: '0 */6 * * *'
-  
-  # Permettre une exécution manuelle depuis GitHub
+    - cron: '0 */2 * * *'
   workflow_dispatch:
 
 jobs:
   sync:
-    name: Synchroniser les vidéos YouTube
     runs-on: ubuntu-latest
-    
-    permissions:
-      contents: read
-    
+
+    env:
+      YOUTUBE_API_KEY: "AIzaSyAXLtlo4BlipyP0InhDIJkaSYNUemNA77I"
+
+      FIREBASE_PROJECT_ID: "yt-trend-pulse"
+      FIREBASE_CLIENT_EMAIL: "firebase-adminsdk-fbsvc@yt-trend-pulse.iam.gserviceaccount.com"
+
+      FIREBASE_PRIVATE_KEY: |
+        -----BEGIN PRIVATE KEY-----
+        MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDLcmZvPTfmb7xc\nLy24jX13WAzrigS3ryUcnMSBpg29Ch+v0thrN8fcK3wi3VAC8P5RaCFB/FnmhjTO\ntoxgsry0OMmszQupDQn3nWmyp08VeEbg3EArJQMfr1H4H7TcUH4qsWKXi5UyoWeZ\nzgl1du1Vl70Nk1gC/lMlvJr1Kr89ZnVCSLYaG2R2R9TwKuzOGIh+WMstDoNgU4yP\nLV3N8bw9NmWNivRQ2Syb5y1Atk5/1HwNontR3+Bz1l9QaE+fLZZAN/vMWcnSpLgt\nMF7/K2Xp2U8A86DRSclSZUCCNuP0GRPIdRv0aXSXIiTIrQlsm8aQUarL4ZkqLi8w\nvhQ39ZvHAgMBAAECggEALMy+yM0aw6gkOsp6z3J8x+yAP9fPLSGo0vGkhgYqbU/O\n5XlRBd8tKAr9VXIVnegyoHuFI1It+8je1Qw2wk5ppmgA5QfsAuhnovqrXVdhX1Fy\nji6CBN4sH2yMaM6WlZM2DTGti8CFdLY9KY3I4HB1V81HqLcjANm/NoafOtCUdzD1\nq85QI9/3EZrdncRLsGZFNagcrbOwHQX9x/QmSQXxQxH2xc/ACJ9JnOurmB5S9rIF\nqxfK8ua8b8Ann55IlAoAbXKIoxQk+uNqf/QFDW1oYktUxjsyFfdioV6OIIGYAZSp\nl3/luIL3SVN8/MyKjM//v4KEDo2Mj4edX/xDdXPYdQKBgQDkqksikhX3waJDTY3t\nb+HqeOkK2e9D7FvfXzmBVJJlLCh8RmQu539r7JvwgMANtiIXGf7CXJmeJs/JmI0o\n2dYGShLgaAitsHFCtxDfrOA08DjysPP2rAzxE8WJ82xK6XA92U2OYDiCU05UVWou\nAVy6AG3pizzjj1/37HUImv6yTQKBgQDjxF1nN06XDB5pZp8ix8meQxLhvUZCVzg5\nJhdIHrjj56yW0oIn/UChT0bUMzjsbgoyIKTdrKFMW+8Hmz6nnLfnPz00MqSJBhGf\nrHLDlPvtlMbKdiffjfygvmT4d0G5Qupp4huRA1KS+9Z4M97UZ+AAqLg0XAfOYDOj\n4XWEmRVIYwKBgBHyq+MSxFamBC50L+erGHhm9SO852LVcoCd4M2d7b+zL5pRjBuC\nYCYAdFz0Ph7VZOebSrvGuOgI89ZG+w1xy7LCraifgc7gQoOSCukDkLWXBWFHMl7y\nMjHZ829Yg+99UyoHnGbIdqcEEunbqnHh+X0/+2CRZT4XStkS3jzGrachAoGAfKfP\n5tmiLZD4Y/9CQSrO8csL3nhUp6JMpxpty47k6fa1wqXbjj9Qy/gzb5fJI7zl36F2\nGcyNStlV7PfORrXDANDfkl3VJxknNBiRhvFXICQ42D3qfLOc++y4HjRGyDoTSXfy\nVl9XJhKmworA/ccMFdBBYIatzwlfueV/B98wgrkCgYEA417e2FD/yO0mZrIIirI4\nN96P6CrKsCcjG/CgmbAxMo6axq3uSiuYHSNE5thNSDHaXH6d2jyJbEEwe53wRwHL\n94eZ482cUd/aq8CSTTs/87Q8YzIEwv5RQKH1WL463StJBfbGL5FTACx0Vt7ZBUAK\nbNdYa529oCaZLIOAEBtONcw=
+        -----END PRIVATE KEY-----
+
     steps:
-      - name: 📥 Cloner le repository
+      - name: 📥 Cloner le dépôt
         uses: actions/checkout@v4
-      
-      - name: 📦 Installer Node.js
+
+      - name: 🟢 Installer Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '17'
-          cache: 'npm'
-      
-      - name: 📚 Installer les dépendances
-        run: npm ci
-        working-directory: .
-      
-      - name: 🔑 Configurer les secrets
-        run: |
-          echo "✅ Secrets configurés"
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-      
-      - name: 🚀 Lancer la synchronisation
-        run: npm run sync
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-      
-      - name: 📧 Notifier en cas d'erreur
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '❌ La synchronisation YouTube a échoué. Vérifie les logs.'
-            })
+          node-version: 22
+
+      - name: 📦 Installer les dépendances
+        run: npm install
+
+      - name: 🚀 Synchronisation
+        run: node script/sync.js
